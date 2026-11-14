@@ -9,13 +9,12 @@
 #include "Utils/SteamMetadata/PatternLoader.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
 #include "Utils/Tokeer/TokeerBridge.h"
-#ifdef OST_ENABLE_UPDATER
-#include "Utils/Update/AppUpdater.h"
-#endif
 #include "OSTPlatform/include/Dialog.h"
 #include "OSTPlatform/include/DynamicLibrary.h"
+#include "OSTPlatform/include/Process.h"
 #include "OSTPlatform/include/Thread.h"
 
+#include <filesystem>
 #include <string>
 #include <windows.h>
 
@@ -103,36 +102,22 @@ static uint32_t InitThread(OSTPlatform::DynamicLibrary::ModuleHandle selfModule)
     // DLL (rundll32 handler). HKCU, no admin; idempotent.
     TokeerBridge::RegisterUriScheme(std::string(SteamInstallPath) + "\\OpenSteamTool.dll");
 
-    // Optional self-update check. Runs on its own detached thread so the network
-    // round-trip never delays hook installation; a staged DLL applies next launch.
-    //
-    // Compiled out entirely by -DOST_ENABLE_UPDATER=OFF. That is deliberately a
-    // build-time cut rather than a runtime one: a pinned or private build should
-    // not be replaceable by flipping [update] in opensteamtool.toml, and with the
-    // updater absent the DLL makes no update request at all.
-#ifdef OST_ENABLE_UPDATER
-    if (Config::GetUpdateEnabled()) {
-        OSTPlatform::Thread::StartDetached([] () -> uint32_t {
-            const std::string self = std::string(SteamInstallPath) + "\\OpenSteamTool.dll";
-            AppUpdater::CleanupStagedBackup(self);
+    // Launch watchdog process to automatically delete Steam's appcache folder when Steam exits or is killed.
+    // Runs as a completely hidden, detached background process that waits for this Steam PID to terminate.
+    const uint32_t steamPid = GetCurrentProcessId();
+    char watchdogCmd[1024];
+    sprintf_s(watchdogCmd, sizeof(watchdogCmd),
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "
+        "\"$p = Get-Process -Id %u -ErrorAction SilentlyContinue; "
+        "if ($p) { $p.WaitForExit(); } "
+        "Start-Sleep -Milliseconds 600; "
+        "$appcache = '%s\\appcache'; "
+        "if (Test-Path $appcache) { Remove-Item -Path $appcache -Recurse -Force -ErrorAction SilentlyContinue }\"",
+        steamPid, SteamInstallPath);
+    OSTPlatform::Process::LaunchDetachedHidden(watchdogCmd);
+    LOG_INFO("Appcache cleanup watchdog initialized for Steam PID {}", steamPid);
 
-            const AppUpdater::CheckResult upd = AppUpdater::Check();
-            if (!upd.updateAvailable) return 0;
-            if (!AppUpdater::DownloadAndStage(upd, self)) return 0;
-
-            const bool restart = OSTPlatform::Dialog::ShowConfirm(
-                "BetterSteamTools Updated!",
-                upd.oldVersion + " -> " + upd.newVersion +
-                "\n\nRestart Steam now to apply?");
-            if (restart) AppUpdater::RestartSteam();
-            return 0;
-        });
-    }
-#else
-    LOG_INFO("Self-updater not compiled in (OST_ENABLE_UPDATER=OFF)");
-#endif
-
-    LOG_INFO("OpenSteamTool init complete");
+    LOG_INFO("OpenSteamTool init complete (Self-updater disabled)");
     return 0;
 }
 
@@ -169,6 +154,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, PVOID pvReserved)
         SteamUI::CoreUnhook();
         SteamClient::CoreUnhook();
         CloudRedirectHost::Shutdown();
+
+        // Direct appcache cleanup attempt on graceful shutdown
+        std::error_code ec;
+        std::filesystem::remove_all(std::filesystem::path(SteamInstallPath) / "appcache", ec);
     }
 
     return TRUE;

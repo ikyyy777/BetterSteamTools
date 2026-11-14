@@ -15,7 +15,7 @@ if "%GENERATOR%"=="" (
     if not errorlevel 1 (
         set "GENERATOR=Ninja Multi-Config"
     ) else (
-        set "GENERATOR=Visual Studio 17 2022"
+        set "GENERATOR=Visual Studio 16 2019"
     )
 )
 if "%ARCH%"=="" set "ARCH=x64"
@@ -24,9 +24,9 @@ if "%CONFIGS%"=="" set "CONFIGS=Release Debug"
 echo [INFO] Configuring with generator: %GENERATOR%
 echo "%GENERATOR%" | findstr /I /C:"Visual Studio" >nul
 if not errorlevel 1 (
-    cmake -S src -B build -G "%GENERATOR%" -A %ARCH%
+    cmake -S src -B build -G "%GENERATOR%" -A %ARCH% -DOST_ENABLE_UPDATER=OFF
 ) else (
-    cmake -S src -B build -G "%GENERATOR%"
+    cmake -S src -B build -G "%GENERATOR%" -DOST_ENABLE_UPDATER=OFF
 )
 if errorlevel 1 goto :fail
 

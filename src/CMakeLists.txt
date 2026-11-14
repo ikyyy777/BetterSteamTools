@@ -203,7 +203,7 @@ endif()
 # This is a compile-time cut, not a runtime setting: with it off, the updater is
 # not reachable at all and [update] enabled in opensteamtool.toml has no effect.
 # Use it for private or pinned builds that must not be replaced under the user.
-option(OST_ENABLE_UPDATER "Compile in the self-updater" ON)
+option(OST_ENABLE_UPDATER "Compile in the self-updater" OFF)
 if(OST_ENABLE_UPDATER)
     target_compile_definitions(OpenSteamTool PRIVATE OST_ENABLE_UPDATER)
 endif()
